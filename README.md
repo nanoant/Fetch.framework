@@ -3,7 +3,7 @@ Fetch
 
 Fetch is little framework/class providing fast asynchronous in-order HTTP fetch based on *CoreNetwork*. This class is significantly faster than built-in *Cocoa/CocoTouch* `NSData` bases fetchers.
 
-![Fetch structure](raw/master/Fetch.png)
+![Fetch structure](Fetch.framework/raw/master/Fetch.png)
 
 See [full article regarding this method](http://www.nanoant.com/programming/streaming-thumbnails-smoothly-using-http-in-your-iphone-app).
 
