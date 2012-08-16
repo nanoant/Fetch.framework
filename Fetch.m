@@ -104,7 +104,7 @@ CFReadStreamRef persistentStream = NULL;
 			NSString *postString = [postElements componentsJoinedByString:@"&"];
 			NSData *postData = [postString dataUsingEncoding:NSUTF8StringEncoding allowLossyConversion:YES];
 			CFHTTPMessageSetHeaderFieldValue(request, CFSTR("Content-Type"), CFSTR("application/x-www-form-urlencoded"));
-			CFHTTPMessageSetHeaderFieldValue(request, CFSTR("Content-Length"), (CFStringRef)[NSString stringWithFormat:@"%llu", [postData length]]);
+			CFHTTPMessageSetHeaderFieldValue(request, CFSTR("Content-Length"), (CFStringRef)[NSString stringWithFormat:@"%zu", (size_t)[postData length]]);
 			CFHTTPMessageSetBody(request, (CFDataRef)postData);
 		}
 		CFHTTPMessageSetHeaderFieldValue(request, CFSTR("Keep-Alive"), CFSTR("30"));
