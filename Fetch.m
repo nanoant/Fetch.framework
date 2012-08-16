@@ -32,6 +32,8 @@
 @synthesize retry;
 @synthesize stream;
 @synthesize gotHeaders;
+@synthesize error;
+@synthesize URL;
 
 void FetchReadCallBack(CFReadStreamRef stream, CFStreamEventType eventType, void *clientCallBackInfo);
 void *CFClientRetain(void *object);
@@ -166,11 +168,11 @@ CFReadStreamRef persistentStream = NULL;
 			streamCount++;
 		} else {
 			DLog(@"fetch:%d CFReadStreamCreateForHTTPRequest failed!", tag);
-			[delegate fetch:self didFailWithError:NULL];
+			[delegate fetchDidFail:self];
 		}
 	} else {
 		DLog(@"fetch:%d CFHTTPMessageCreateRequest failed!", tag);
-		[delegate fetch:self didFailWithError:NULL];
+		[delegate fetchDidFail:self];
 	}
 	CFRelease(request);
 
@@ -183,6 +185,16 @@ CFReadStreamRef persistentStream = NULL;
 	CFReadStreamClose(stream);
 	// This will release the fetch object
 	CFReadStreamSetClient(stream, kCFStreamEventNone, NULL, NULL);
+}
+
+- (NSURL *)URL
+{
+	return [(NSURL *)CFReadStreamCopyProperty(stream, kCFStreamPropertyHTTPFinalURL) autorelease];
+}
+
+- (NSError *)error
+{
+	return [(NSError *)CFReadStreamCopyError(stream) autorelease];
 }
 
 - (void)detach
@@ -244,11 +256,12 @@ CFStringRef CFClientDescribeCopy(void *object)
 void FetchReadCallBack(CFReadStreamRef stream, CFStreamEventType eventType, void *clientCallBackInfo)
 {
 	Fetch *fetch = (Fetch *)clientCallBackInfo;
+	if(!fetch || fetch->stream != stream) return;
 	if(!fetch.gotHeaders) {
 		fetch.gotHeaders = YES;
 		CFHTTPMessageRef response = (CFHTTPMessageRef)CFReadStreamCopyProperty(stream, kCFStreamPropertyHTTPResponseHeader);
 		if(response == NULL) {
-			[fetch.delegate fetch:fetch didFailWithError:NULL];
+			[fetch.delegate fetchDidFail:fetch];
 			[fetch cancel];
 			return;
 		}
@@ -269,7 +282,7 @@ void FetchReadCallBack(CFReadStreamRef stream, CFStreamEventType eventType, void
 			CFIndex bytesRead = CFReadStreamRead(stream, buf, sizeof(buf));
 			// Returning -1 means an error
 			if(bytesRead == -1) {
-				[fetch.delegate fetch:fetch didFailWithError:NULL];
+				[fetch.delegate fetchDidFail:fetch];
 				[fetch cancel];
 			} else if(bytesRead > 0) {
 				[fetch.data appendBytes:buf length:bytesRead];
@@ -277,11 +290,11 @@ void FetchReadCallBack(CFReadStreamRef stream, CFStreamEventType eventType, void
 		}
 		break;
 	case kCFStreamEventErrorOccurred:
-		[fetch.delegate fetch:fetch didFailWithError:NULL];
+		[fetch.delegate fetchDidFail:fetch];
 		[fetch cancel];
 		break;
 	case kCFStreamEventEndEncountered:
-		[fetch.delegate fetchDidFinishLoading:fetch];
+		[fetch.delegate fetchDidFinish:fetch];
 		[fetch detach];
 		break;
 	default:

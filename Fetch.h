@@ -29,8 +29,8 @@
 
 @protocol FetchDelegate
 
-- (void)fetch:(Fetch *)fetch didFailWithError:(NSError *)error;
-- (void)fetchDidFinishLoading:(Fetch *)connection;
+- (void)fetchDidFail:(Fetch *)fetch;
+- (void)fetchDidFinish:(Fetch *)fetch;
 - (void)fetch:(Fetch *)fetch didReceiveStatusCode:(NSInteger)statusCode contentLength:(NSInteger)contentLength;
 
 @end
@@ -50,6 +50,8 @@
 @property (assign) BOOL retry;
 @property (assign) CFReadStreamRef stream;
 @property (assign) BOOL gotHeaders;
+@property (readonly) NSError *error;
+@property (readonly) NSURL *URL;
 
 - (id)initWithURL:(NSURL *)url
 		 delegate:(id<FetchDelegate>)_delegate
