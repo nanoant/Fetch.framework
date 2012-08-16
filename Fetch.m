@@ -41,6 +41,11 @@ CFStringRef CFClientDescribeCopy(void *object);
 static int streamCount = 0;
 CFReadStreamRef persistentStream = NULL;
 
+// Define DLog in your pch header in order to get debugging info
+#ifndef DLog
+#define DLog(fmt,...)
+#endif
+
 + (void)cleanupPersistentConnections
 {
 	if(persistentStream != NULL) {
