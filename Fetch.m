@@ -106,7 +106,7 @@ NSInputStream *persistentStream = NULL;
   CFHTTPMessageRef request = CFHTTPMessageCreateRequest(
       kCFAllocatorDefault, post ? CFSTR("POST") : CFSTR("GET"),
       (__bridge CFURLRef)url, kCFHTTPVersion1_1);
-  if (request != NULL) {
+  if (request) {
     if (post) {
       NSMutableArray *postElements =
           [NSMutableArray arrayWithCapacity:post.count];
@@ -191,10 +191,10 @@ NSInputStream *persistentStream = NULL;
     } else {
       [delegate fetchDidFail:self];
     }
+    CFRelease(request);
   } else {
     [delegate fetchDidFail:self];
   }
-  CFRelease(request);
 
   return self;
 }
