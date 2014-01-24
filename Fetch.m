@@ -26,7 +26,7 @@
 
 @interface Fetch ()
 
-@property(assign) CFReadStreamRef stream;
+@property(strong) NSInputStream *stream;
 @property(assign) BOOL gotHeaders;
 
 @end
@@ -48,23 +48,13 @@ void *CFClientRetain(void *object);
 void CFClientRelease(void *object);
 CFStringRef CFClientDescribeCopy(void *object);
 
-static int streamCount = 0;
-CFReadStreamRef persistentStream = NULL;
-
-// Define DLog in your pch header in order to get debugging info
-#ifndef DLog
-#define DLog(fmt, ...)
-#endif
+static NSUInteger streamCount = 0;
+NSInputStream *persistentStream = NULL;
 
 + (void)cleanupPersistentConnections
 {
-  if (persistentStream != NULL) {
-    DLog(@"%p fetch *cleanup [%ld]", persistentStream,
-         CFGetRetainCount(persistentStream));
-    CFReadStreamClose(persistentStream);
-    CFRelease(persistentStream);
-    persistentStream = NULL;
-  }
+  [persistentStream close];
+  persistentStream = NULL;
 }
 
 + (Fetch *)fetchURL:(NSURL *)url
@@ -100,22 +90,22 @@ CFReadStreamRef persistentStream = NULL;
                                post:post];
 }
 
-- (id)initWithURL:(NSURL *)_url
-         delegate:(id<FetchDelegate>)_delegate
-              tag:(NSInteger)_tag
-            retry:(BOOL)_retry
+- (id)initWithURL:(NSURL *)url
+         delegate:(id<FetchDelegate>)aDelegate
+              tag:(NSInteger)aTag
+            retry:(BOOL)aRetry
           cookies:(NSArray *)cookies
              hash:(NSString *)hash
              post:(NSDictionary *)post
 {
   // Copy properties
-  self.delegate = _delegate;
-  tag = _tag;
-  retry = _retry;
+  delegate = aDelegate;
+  tag = aTag;
+  retry = aRetry;
 
   CFHTTPMessageRef request = CFHTTPMessageCreateRequest(
       kCFAllocatorDefault, post ? CFSTR("POST") : CFSTR("GET"),
-      (__bridge CFURLRef)_url, kCFHTTPVersion1_1);
+      (__bridge CFURLRef)url, kCFHTTPVersion1_1);
   if (request != NULL) {
     if (post) {
       NSMutableArray *postElements =
@@ -156,56 +146,52 @@ CFReadStreamRef persistentStream = NULL;
                                        (__bridge CFStringRef)hash);
     }
 
-    stream = CFReadStreamCreateForHTTPRequest(kCFAllocatorDefault, request);
+    stream =
+        (__bridge_transfer NSInputStream *)CFReadStreamCreateForHTTPRequest(
+            kCFAllocatorDefault, request);
 
     if (stream != NULL) {
       CFStreamClientContext context = { 0, (__bridge void *)self,
                                         CFClientRetain, CFClientRelease,
                                         CFClientDescribeCopy };
-      CFReadStreamSetClient(stream, kCFStreamEventHasBytesAvailable |
-                                        kCFStreamEventErrorOccurred |
-                                        kCFStreamEventEndEncountered,
+      CFReadStreamSetClient((CFReadStreamRef)stream,
+                            kCFStreamEventHasBytesAvailable |
+                                kCFStreamEventErrorOccurred |
+                                kCFStreamEventEndEncountered,
                             FetchReadCallBack, &context);
-      CFReadStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(),
-                                      kCFRunLoopCommonModes);
+      [stream scheduleInRunLoop:[NSRunLoop mainRunLoop]
+                        forMode:NSRunLoopCommonModes];
 
       // In meantime our persistent stream may be closed, check that.
       // If we won't do it, our new stream will raise an error on startup
       // FIXME: This is a bug in CFNetwork!
       if (persistentStream != NULL) {
-        CFStreamStatus status = CFReadStreamGetStatus(persistentStream);
-        if (status == kCFStreamStatusNotOpen ||
-            status == kCFStreamStatusClosed || status == kCFStreamStatusError) {
-          DLog(@"%p fetch:%ld *alerady closed [%ld]", persistentStream,
-               (long)tag, CFGetRetainCount(persistentStream));
-          CFReadStreamClose(persistentStream);
-          CFRelease(persistentStream);
+        switch (persistentStream.streamStatus) {
+        case NSStreamStatusNotOpen:
+        case NSStreamStatusClosed:
+        case NSStreamStatusError:
+          [persistentStream close];
           persistentStream = NULL;
+          break;
+        default:
+          break;
         }
       }
 
-      CFReadStreamSetProperty(stream,
-                              kCFStreamPropertyHTTPAttemptPersistentConnection,
-                              kCFBooleanTrue);
-      CFReadStreamOpen(stream);
-      DLog(@"%p fetch:%ld -init [%ld] %@", stream, (long)tag,
-           CFGetRetainCount(stream), _url);
+      [stream setProperty:@YES
+                   forKey:(id)kCFStreamPropertyHTTPAttemptPersistentConnection];
+      [stream open];
 
       if (persistentStream != NULL) {
-        DLog(@"%p fetch:%ld *close [%ld]", persistentStream, (long)tag,
-             CFGetRetainCount(persistentStream));
-        CFReadStreamClose(persistentStream);
-        CFRelease(persistentStream);
+        [persistentStream close];
         persistentStream = NULL;
       }
 
-      streamCount++;
+      ++streamCount;
     } else {
-      DLog(@"fetch:%ld CFReadStreamCreateForHTTPRequest failed!", (long)tag);
       [delegate fetchDidFail:self];
     }
   } else {
-    DLog(@"fetch:%ld CFHTTPMessageCreateRequest failed!", (long)tag);
     [delegate fetchDidFail:self];
   }
   CFRelease(request);
@@ -215,63 +201,38 @@ CFReadStreamRef persistentStream = NULL;
 
 - (void)cancel
 {
-  DLog(@"%p fetch:%ld -cancel [%ld]", stream, (long)tag,
-       CFGetRetainCount(stream));
-  CFReadStreamClose(stream);
-  // This will release the fetch object
-  CFReadStreamSetClient(stream, kCFStreamEventNone, NULL, NULL);
+  [stream close];
+  // this will release the fetch object
+  CFReadStreamSetClient((CFReadStreamRef)stream, kCFStreamEventNone, NULL,
+                        NULL);
 }
 
 - (NSURL *)URL
 {
-  return (NSURL *)CFBridgingRelease(
-      CFReadStreamCopyProperty(stream, kCFStreamPropertyHTTPFinalURL));
+  return (NSURL *)[stream propertyForKey:(id)kCFStreamPropertyHTTPFinalURL];
 }
 
 - (NSError *)error
 {
-  return (NSError *)CFBridgingRelease(CFReadStreamCopyError(stream));
+  return stream.streamError;
 }
 
 - (void)detach
 {
-  DLog(@"%p fetch:%ld -detach [%ld]", stream, (long)tag,
-       CFGetRetainCount(stream));
   if (streamCount > 1) {
-    DLog(@"%p fetch:%ld *release [%ld]", stream, (long)tag,
-         CFGetRetainCount(stream));
-    CFReadStreamClose(stream);
+    [stream close];
   } else {
-    DLog(@"%p fetch:%ld *retain [%ld]", stream, (long)tag,
-         CFGetRetainCount(stream));
     persistentStream = stream;
-    CFRetain(persistentStream);
   }
 
-  // This will release the fetch object
-  CFReadStreamSetClient(stream, kCFStreamEventNone, NULL, NULL);
-}
-
-+ (void)releaseStream:(id)streamObject
-{
-  CFRelease((CFReadStreamRef)streamObject);
+  // this will release the fetch object
+  CFReadStreamSetClient((CFReadStreamRef)stream, kCFStreamEventNone, NULL,
+                        NULL);
 }
 
 - (void)dealloc
 {
-  DLog(@"%p fetch:%ld -dealloc [%ld]", stream, (long)tag,
-       CFGetRetainCount(stream));
-
-  // FIXME: This fixes case where retain count for stream is 1 and after
-  // returning
-  // from this function CFNetwork routines crashes, because stream context is
-  // freed.
-  // CFRelease(stream);
-  [Fetch performSelector:@selector(releaseStream:)
-              withObject:(__bridge id)stream
-              afterDelay:10];
-
-  streamCount--;
+  --streamCount;
 }
 
 #pragma mark -
@@ -296,7 +257,7 @@ void FetchReadCallBack(CFReadStreamRef stream, CFStreamEventType eventType,
                        void *clientCallBackInfo)
 {
   Fetch *fetch = (__bridge Fetch *)clientCallBackInfo;
-  if (!fetch || fetch->stream != stream) return;
+  if (!fetch || fetch->stream != (__bridge NSInputStream *)stream) return;
   if (!fetch.gotHeaders) {
     fetch.gotHeaders = YES;
     CFHTTPMessageRef response = (CFHTTPMessageRef)CFReadStreamCopyProperty(
@@ -329,7 +290,7 @@ void FetchReadCallBack(CFReadStreamRef stream, CFStreamEventType eventType,
         [fetch.delegate fetchDidFail:fetch];
         [fetch cancel];
       } else if (bytesRead > 0) {
-        [(NSMutableData *)fetch.data appendBytes:buf length:bytesRead];
+        [fetch.data appendBytes:buf length:bytesRead];
       }
     }
     break;
